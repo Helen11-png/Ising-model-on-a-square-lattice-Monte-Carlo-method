@@ -1,0 +1,216 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+<meta charset="UTF-8">
+<title>Модель Изинга — визуализация</title>
+<style>
+* { margin: 0; padding: 0; box-sizing: border-box; }
+body { background: #eef2f5; font-family: system-ui, sans-serif; padding: 2rem 1rem; }
+.container { max-width: 900px; background: #fff; border-radius: 24px;
+  box-shadow: 0 8px 20px rgba(0,0,0,0.05); padding: 2rem; margin: 0 auto; }
+h2 { font-weight: 500; font-size: 1.6rem; color: #2c3e44; margin-bottom: 1.5rem;
+  border-left: 4px solid #8aaeb6; padding-left: 1rem; }
+
+.controls { display: flex; flex-wrap: wrap; gap: 0.75rem; margin-bottom: 1.5rem; align-items: center; }
+.file-group { display: flex; align-items: center; gap: 0.5rem; }
+label.lbl { font-size: 0.85rem; color: #5a7a84; white-space: nowrap; }
+input[type="file"] { font-size: 0.85rem; color: #2c5a66;
+  background: #f0f3f6; border: 1px solid #d0dce2; border-radius: 20px;
+  padding: 0.4rem 1rem; cursor: pointer; }
+input[type="file"]:hover { background: #e6edf2; }
+button { background: #eef2f5; border: 1px solid #ccd9df; border-radius: 20px;
+  padding: 0.45rem 1.2rem; font-size: 0.85rem; font-weight: 500;
+  color: #2f5d6b; cursor: pointer; }
+button:hover { background: #e4ebf0; }
+
+#status { font-size: 0.82rem; color: #7a9da8; background: #f7fafc;
+  padding: 0.5rem 1rem; border-radius: 16px; border-left: 3px solid #bbd2db; }
+
+/* Сетка графиков */
+.charts-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin-bottom: 1.5rem; }
+.chart-card { background: #f8fbfc; border-radius: 16px; border: 1px solid #e0ecf0;
+  padding: 1rem; }
+.chart-card h3 { font-size: 0.85rem; font-weight: 500; color: #4a7480; margin-bottom: 0.75rem; }
+.chart-wrap { position: relative; height: 200px; }
+
+/* Панель решётки */
+.lattice-panel { background: #f8fbfc; border-radius: 16px; border: 1px solid #e0ecf0;
+  padding: 1rem; display: flex; flex-direction: column; align-items: center; gap: 0.5rem; }
+.lattice-panel h3 { font-size: 0.85rem; font-weight: 500; color: #4a7480; align-self: flex-start; }
+canvas#isingCanvas { border: 1px solid #c8dae0; image-rendering: pixelated;
+  image-rendering: crisp-edges; max-width: 100%; }
+.legend { display: flex; gap: 1rem; font-size: 0.78rem; color: #6a8a94; margin-top: 0.25rem; }
+.legend span { display: flex; align-items: center; gap: 4px; }
+.legend .swatch { width: 12px; height: 12px; border-radius: 2px; border: 1px solid #bbb; }
+</style>
+</head>
+<body>
+<div class="container">
+  <h2>2D модель Изинга</h2>
+
+  <div class="controls">
+    <div class="file-group">
+      <label class="lbl">Данные:</label>
+      <input type="file" id="resultsFile" accept=".txt">
+    </div>
+    <div class="file-group">
+      <label class="lbl">Решётка:</label>
+      <input type="file" id="latticeFile" accept=".txt">
+    </div>
+    <button id="loadBtn">Построить</button>
+    <span id="status">Загрузите results.txt и lattice.txt, затем нажмите «Построить»</span>
+  </div>
+
+  <!-- Три графика -->
+  <div class="charts-grid">
+    <div class="chart-card">
+      <h3>M(T) — намагниченность на спин</h3>
+      <div class="chart-wrap">
+        <canvas id="chartM" role="img" aria-label="Намагниченность от температуры"></canvas>
+      </div>
+    </div>
+    <div class="chart-card">
+      <h3>C(T) — удельная теплоёмкость</h3>
+      <div class="chart-wrap">
+        <canvas id="chartC" role="img" aria-label="Теплоёмкость от температуры"></canvas>
+      </div>
+    </div>
+    <div class="chart-card" style="grid-column: 1 / -1;">
+      <h3>χ(T) — магнитная восприимчивость</h3>
+      <div class="chart-wrap" style="height: 180px;">
+        <canvas id="chartChi" role="img" aria-label="Восприимчивость от температуры"></canvas>
+      </div>
+    </div>
+  </div>
+
+  <!-- Визуализация решётки -->
+  <div class="lattice-panel">
+    <h3>Визуализация решётки спинов (lattice.txt)</h3>
+    <canvas id="isingCanvas" width="512" height="512"></canvas>
+    <div class="legend">
+      <span><span class="swatch" style="background:#fff;"></span>Спин +1</span>
+      <span><span class="swatch" style="background:#222;"></span>Спин −1</span>
+    </div>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+const COLORS = { M: '#3266ad', C: '#d85a30', Chi: '#1d9e75', Tc: '#c0392b' };
+let chartM, chartC, chartChi;
+
+function makeChartOptions(yLabel) {
+  return {
+    responsive: true,
+    maintainAspectRatio: false,
+    plugins: {
+      legend: { display: false },
+      annotation: {}
+    },
+    scales: {
+      x: {
+        title: { display: true, text: 'T (k_B/J)', color: '#7a9da8', font: { size: 11 } },
+        ticks: { color: '#7a9da8', font: { size: 10 }, maxTicksLimit: 8 },
+        grid: { color: 'rgba(0,0,0,0.05)' }
+      },
+      y: {
+        title: { display: true, text: yLabel, color: '#7a9da8', font: { size: 11 } },
+        ticks: { color: '#7a9da8', font: { size: 10 }, maxTicksLimit: 5 },
+        grid: { color: 'rgba(0,0,0,0.05)' }
+      }
+    }
+  };
+}
+
+function initCharts() {
+  const base = (id, color, label) => new Chart(document.getElementById(id), {
+    type: 'line',
+    data: { labels: [], datasets: [{ data: [], borderColor: color,
+      backgroundColor: color + '22', fill: true, pointRadius: 3,
+      borderWidth: 2, tension: 0.35 }] },
+    options: makeChartOptions(label)
+  });
+  chartM   = base('chartM',   COLORS.M,   '⟨|M|⟩ / N');
+  chartC   = base('chartC',   COLORS.C,   'C / N');
+  chartChi = base('chartChi', COLORS.Chi, 'χ / N');
+}
+
+function updateCharts(rows) {
+  const labels = rows.map(r => r.T.toFixed(2));
+  const set = (chart, key) => {
+    chart.data.labels = labels;
+    chart.data.datasets[0].data = rows.map(r => r[key]);
+    chart.update();
+  };
+  set(chartM,   'M');
+  set(chartC,   'C');
+  set(chartChi, 'Chi');
+}
+
+function parseResults(text) {
+  const lines = text.trim().split(/\r?\n/);
+  const rows = [];
+  for (const line of lines) {
+    if (line.startsWith('T') || line.trim() === '') continue;
+    const parts = line.trim().split(/\s+/);
+    if (parts.length < 4) continue;
+    rows.push({ T: +parts[0], M: +parts[1], C: +parts[2], Chi: +parts[3] });
+  }
+  return rows;
+}
+
+function drawLattice(text) {
+  const canvas = document.getElementById('isingCanvas');
+  const ctx = canvas.getContext('2d');
+  const lines = text.trim().split(/\r?\n/);
+  const L = lines.length;
+  const cw = canvas.width / L;
+  const ch = canvas.height / L;
+  for (let i = 0; i < L; i++) {
+    const vals = lines[i].trim().split(/\s+/);
+    for (let j = 0; j < L; j++) {
+      const b = +vals[j] === 1 ? 255 : 0;
+      ctx.fillStyle = `rgb(${b},${b},${b})`;
+      ctx.fillRect(j * cw, i * ch, cw, ch);
+    }
+  }
+  return L;
+}
+
+initCharts();
+
+document.getElementById('loadBtn').addEventListener('click', () => {
+  const rf = document.getElementById('resultsFile').files[0];
+  const lf = document.getElementById('latticeFile').files[0];
+  const status = document.getElementById('status');
+
+  if (!rf && !lf) { status.textContent = 'Выберите хотя бы один файл'; return; }
+
+  let done = 0;
+  const check = () => { if (done === (rf ? 1 : 0) + (lf ? 1 : 0)) status.textContent = 'Загружено'; };
+
+  if (rf) {
+    const r = new FileReader();
+    r.onload = e => {
+      const rows = parseResults(e.target.result);
+      if (rows.length === 0) { status.textContent = 'Ошибка: results.txt пуст или неверный формат'; return; }
+      updateCharts(rows);
+      status.textContent = `Данные: ${rows.length} точек по T`;
+      done++; check();
+    };
+    r.readAsText(rf);
+  }
+
+  if (lf) {
+    const r = new FileReader();
+    r.onload = e => {
+      const L = drawLattice(e.target.result);
+      status.textContent = `Решётка ${L}×${L} загружена`;
+      done++; check();
+    };
+    r.readAsText(lf);
+  }
+});
+</script>
+</body>
+</html>
